@@ -27,6 +27,10 @@ public class TransactionService implements ITransactionService {
     static BigDecimal min = BigDecimal.ZERO;
     static BigDecimal max = BigDecimal.ZERO;
 
+    
+    /*
+    * New transactions are added here. To achieve O(1) complexity, I use running aggregates
+    */
     @Override
     public void add(Transaction transaction) throws InvalidDateException {
         synchronized (this) {
@@ -53,6 +57,9 @@ public class TransactionService implements ITransactionService {
         }
     }
 
+    /*
+    * This method returns the statistics of the transactions in the last 30 seconds
+    */
     @Override
     public synchronized Statistics getStatistics() {
         avg = !transactionList.isEmpty() ? sumOfAmounts
@@ -60,8 +67,11 @@ public class TransactionService implements ITransactionService {
         return new Statistics(sumOfAmounts, avg, max, min, transactionList.size());
     }
 
+    /*
+    * Scheduled job to run maintenance on the background
+    */
     @Scheduled(fixedRate = POLLING_INTERVAL_RATE_MILLIS)
-    Queue<Transaction> removeOldTransactions() {
+    public Queue<Transaction> removeOldTransactions() {
        final long CUTOFF_TIME = new Date().getTime() - VALIDITY_INTERVAL;
        return removeOldTransactions(CUTOFF_TIME);        
     }
@@ -70,8 +80,6 @@ public class TransactionService implements ITransactionService {
         synchronized (this) {
             boolean isMinChanged = false;
             boolean isMaxChanged = false;
-            System.out.println("this is cutoff: "+cutoffTime);
-            System.out.println("this is peek: "+transactionList.peek().timestamp().getTime());
             while (!transactionList.isEmpty() && transactionList.peek().timestamp().getTime() < cutoffTime) {
                 final var transaction = transactionList.poll();
                 sumOfAmounts = sumOfAmounts.subtract(transaction.amount());
