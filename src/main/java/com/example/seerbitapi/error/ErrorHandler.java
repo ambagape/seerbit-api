@@ -1,6 +1,6 @@
 package com.example.seerbitapi.error;
 
-import com.example.seerbitapi.services.InvalidDateException;
+import com.example.seerbitapi.services.exceptions.InvalidDateException;
 import java.util.HashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
