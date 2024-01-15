@@ -3,10 +3,11 @@ package com.example.seerbitapi.services;
 import com.example.seerbitapi.dtos.Statistics;
 import com.example.seerbitapi.dtos.Transaction;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Date;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.PriorityQueue;
+import java.util.Queue;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
@@ -16,42 +17,84 @@ import org.springframework.stereotype.Service;
 @Service
 public class TransactionService implements ITransactionService {
 
-    static final List<Transaction> transactionList = new LinkedList<>();
-    
-    final long VALIDITY_INTERVAL = 30 * 1000;
+    static final Queue<Transaction> transactionList = new PriorityQueue<>(Transaction::compareTo);
+
+    static final long POLLING_INTERVAL_RATE_MILLIS = 200;
+    static final long VALIDITY_INTERVAL = 30 * 1000;
+    static BigDecimal sumOfAmounts = BigDecimal.ZERO;
+    static BigDecimal avg = BigDecimal.ZERO;
+    static BigDecimal min = BigDecimal.ZERO;
+    static BigDecimal max = BigDecimal.ZERO;
 
     @Override
-    public void add(Transaction transaction) throws InvalidDateException{
-        if(transaction.timestamp().getTime() < new Date().getTime() - VALIDITY_INTERVAL){
-            throw new InvalidDateException();
+    public void add(Transaction transaction) throws InvalidDateException {
+        synchronized (this) {
+            if (transaction.timestamp().getTime() < new Date().getTime() - VALIDITY_INTERVAL) {
+                throw new InvalidDateException();
+            }
+            if (transactionList.isEmpty() && !transaction.amount().equals(BigDecimal.ZERO)) {
+                min = transaction.amount();
+                max = transaction.amount();
+            } else {
+                min = transaction.amount().min(min);
+                max = transaction.amount().max(max);
+            }
+            transactionList.add(transaction);
+            sumOfAmounts = sumOfAmounts.add(transaction.amount());
         }
-        transactionList.add(transaction);
     }
 
     @Override
-    public void deleteAll() {
-        transactionList.clear();
+    public synchronized void deleteAll() {
+        synchronized (this) {
+            transactionList.clear();
+            resetStatistics();
+        }
     }
 
     @Override
-    public Statistics getStatistics() {
-        this.removeOldTransactions();
-        final var size = transactionList.size();
-        final var amounts = transactionList.stream()
-                .map(Transaction::amount)
-                .collect(Collectors.toList());        
-        final var sum = amounts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        final var avg = size == 0 || sum.equals(BigDecimal.ZERO) ? BigDecimal.ZERO: sum.divide(new BigDecimal(size));
-        final var min = amounts.stream().min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
-        final var max = amounts.stream().max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
-        return new Statistics(sum, avg, max, min, size);
+    public synchronized Statistics getStatistics() {
+        avg = !transactionList.isEmpty() ? sumOfAmounts
+                .divide(new BigDecimal(transactionList.size()), RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        return new Statistics(sumOfAmounts, avg, max, min, transactionList.size());
     }
 
-    private List<Transaction> removeOldTransactions() {
-        transactionList.removeIf((transaction) -> {
-            return transaction.timestamp().getTime() + VALIDITY_INTERVAL < new Date().getTime();
-        });
-        return transactionList;
+    @Scheduled(fixedRate = POLLING_INTERVAL_RATE_MILLIS)
+    Queue<Transaction> removeOldTransactions() {
+       final long CUTOFF_TIME = new Date().getTime() - VALIDITY_INTERVAL;
+       return removeOldTransactions(CUTOFF_TIME);        
+    }
+    
+    Queue<Transaction> removeOldTransactions(long cutoffTime) {
+        synchronized (this) {
+            boolean isMinChanged = false;
+            boolean isMaxChanged = false;
+            System.out.println("this is cutoff: "+cutoffTime);
+            System.out.println("this is peek: "+transactionList.peek().timestamp().getTime());
+            while (!transactionList.isEmpty() && transactionList.peek().timestamp().getTime() < cutoffTime) {
+                final var transaction = transactionList.poll();
+                sumOfAmounts = sumOfAmounts.subtract(transaction.amount());
+                if (min == transaction.amount()) {
+                    isMinChanged = true;
+                }
+                if (max == transaction.amount()) {
+                    isMaxChanged = true;
+                }
+            }
+            if (isMinChanged) {
+                min = transactionList.stream().map(Transaction::amount).min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+            }
+            if (isMaxChanged) {
+                max = transactionList.stream().map(Transaction::amount).max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+            }
+            return transactionList;
+        }
     }
 
+    private void resetStatistics() {
+        sumOfAmounts = BigDecimal.ZERO;
+        avg = BigDecimal.ZERO;
+        min = BigDecimal.ZERO;
+        max = BigDecimal.ZERO;
+    }
 }

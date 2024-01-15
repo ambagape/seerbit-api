@@ -13,6 +13,11 @@ import java.util.Date;
  * @author HP
  */
 public record Transaction(@NotNull(message = "Amount must not be null") BigDecimal amount, 
-        @NotNull(message = "timestamp must not be null")  Date timestamp) {
+        @NotNull(message = "timestamp must not be null")  Date timestamp) implements Comparable<Transaction>{
+
+    @Override
+    public int compareTo(Transaction other) {
+        return Long.compare(this.timestamp().getTime(), other.timestamp().getTime());
+    }
     
 }
